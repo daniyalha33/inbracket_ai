@@ -1,0 +1,99 @@
+# ToothGroupNetwork
+
+- Source code: [GitHub](https://github.com/limhoyeon/ToothGroupNetwork)
+
+# Dataset
+
+## Official Dataset
+
+- They used the dataset shared in [the challenge git repository](https://github.com/abenhamadou/3DTeethSeg22_challenge). For more information about the data, check out the link.
+- Dataset consists of dental mesh obj files and corresponding ground truth json files.
+- One can also download the challenge training split data in [google drive](https://drive.google.com/drive/u/1/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby)(their models are based on this data).
+
+  - After download and unzip these zip files, merge `3D_scans_per_patient_obj_files.zip` and `3D_scans_per_patient_obj_files_b2.zip`. The parent path of these obj files is `data_obj_parent_directory`.
+  - Apply the same to the ground truth json files(`ground-truth_labels_instances.zip` and `ground-truth_labels_instances_b2.zip`. The parent path of these json files is `data_json_parent_directory`).
+  - The directory structure of the data should look like below..
+
+    ```
+    --data_obj_parent_directory
+    ----00OMSZGW
+    ------00OMSZGW_lower.obj
+    ------00OMSZGW_upper.obj
+    ----0EAKT1CU
+    ------0EAKT1CU_lower.obj
+    ------0EAKT1CU_upper.obj
+    and so on..
+
+    --data_json_parent_directory
+    ----00OMSZGW
+    ------00OMSZGW_lower.json
+    ------00OMSZGW_upper.jsno
+    ----0EAKT1CU
+    ------0EAKT1CU_lower.json
+    ------0EAKT1CU_upper.json
+    and so on..
+    ```
+
+## Custom Dataset
+
+- If using dental mesh data:
+
+  - Adhere to the data name format(casename_upper.obj or casename_lower.obj).
+  - All axes must be aligned as shown in the figure below. Note that the Y-axis points towards the back direction(plz note that both lower jaw and upper jaw have the same z-direction!).
+
+    <img src="https://user-images.githubusercontent.com/70117866/233266358-1f7139ff-3921-44d8-b5bf-1461645de2b3.png" width="600" height="400">
+
+# Inference
+
+- All of the checkpoint files for each model are in (https://drive.google.com/drive/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby?usp=sharing). Download ckpts(new).zip and unzip all of the checkpoints. Keep tgnet_bdl.h5 and tgnet_fps.h5 and remove the rest files.
+- Inference with tgnet
+
+  ```
+  python start_test.py \
+   --input_lower_path obj_path \
+   --input_upper_path obj_path \
+   --cache_path folder_path \
+   --checkpoint_path your/tgnet_fps_checkpoint_path \
+   --checkpoint_path_bdl your/tgnet_bdl_checkpoint_path
+  ```
+
+- Predicted results are saved in cache path like below. It has the same format as the ground truth json file.
+  ```
+  --cache_path
+  ----input_lower.obj
+  ----raw_upper.obj
+  ----input_upper.obj
+  ----input_lower.json
+  ----input_upper.json
+  ```
+
+# Installation
+
+- Installation tested with CUDA 12.5, PyTorch 2.0 and Python 3.9.19.
+- Create virtual environment using conda
+
+  ```
+  conda create -n aisegment_env python=3.9
+  conda activate aisegment_env
+  ```
+
+- Install PyTorch. Select the version according to your CUDA version: https://pytorch.org/get-started/locally/
+
+- Install PyTorch-Geometric. Select the version according to your CUDA version and PyTorch version: https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
+
+- Install Torch-Scatter, Torch-Sparse and Torch-Cluster. Select the version according to your CUDA version and PyTorch version:
+
+  - torch-scatter: https://github.com/rusty1s/pytorch_scatter
+  - torch-sparse: https://github.com/rusty1s/pytorch_sparse
+  - torch-cluster: https://github.com/rusty1s/pytorch_cluster
+
+- Install following packages in the environment
+  ```
+  pip install wandb
+  pip install --ignore-installed PyYAML
+  pip install open3d
+  pip install multimethod
+  pip install termcolor
+  pip install trimesh
+  pip install easydict
+  ```

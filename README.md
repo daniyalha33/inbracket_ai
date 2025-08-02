@@ -1,5 +1,6 @@
 ![](models/archi.png)
 
+- We used almost the above archi design which has some minor changes in model training we did not use the transformer downsample part. 
 
 
 ## Official Dataset

@@ -4,9 +4,8 @@
 
 ## Official Dataset
 
-- We used the dataset shared in [the challenge git repository](https://github.com/abenhamadou/3DTeethSeg22_challenge).
 - Dataset consists of dental mesh obj files and corresponding ground truth json files.
-- One can also download the challenge training split data in [google drive](https://drive.google.com/drive/u/1/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby)(their models are based on this data).
+- One can also download the training split data in [google drive](https://drive.google.com/drive/u/1/folders/15oP0CZM_O_-Bir18VbSM8wRUEzoyLXby)(their models are based on this data).
 
   - After download and unzip these zip files, merge `3D_scans_per_patient_obj_files.zip` and `3D_scans_per_patient_obj_files_b2.zip`. The parent path of these obj files is `data_obj_parent_directory`.
   - Apply the same to the ground truth json files(`ground-truth_labels_instances.zip` and `ground-truth_labels_instances_b2.zip`. The parent path of these json files is `data_json_parent_directory`).
@@ -37,9 +36,6 @@
 - If using dental mesh data: and want to use custom dataset use diffusion based augmentation which will create mesh data and increase you dataset.
 
   - Adhere to the data name format(casename_upper.obj or casename_lower.obj).
-  - All axes must be aligned as shown in the figure below. Note that the Y-axis points towards the back direction(plz note that both lower jaw and upper jaw have the same z-direction!).
-
-    <img src="https://user-images.githubusercontent.com/70117866/233266358-1f7139ff-3921-44d8-b5bf-1461645de2b3.png" width="600" height="400">
 
 # Inference
 

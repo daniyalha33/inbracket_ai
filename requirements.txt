@@ -1,0 +1,23 @@
+# FastAPI server dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+requests==2.31.0
+
+# Core ML dependencies (for 3Dteethsegmentation)
+torch
+torchvision
+torchaudio
+torch-geometric
+open3d
+numpy
+trimesh
+easydict
+termcolor
+multimethod
+wandb
+pyyaml
+fpsample
+
+# Note: torch-scatter, torch-sparse, and torch-cluster need to be installed separately
+# See installation instructions in README.md

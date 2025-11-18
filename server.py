@@ -2,7 +2,7 @@
 FastAPI Server for 3D Teeth Segmentation
 Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8000
 """
-
+import sys
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,10 +33,10 @@ CACHE_DIR = PROJECT_ROOT / "cache"
 CHECKPOINT_PATH_FPS = PROJECT_ROOT / "tgnet_fps"
 CHECKPOINT_PATH_BDL = PROJECT_ROOT / "tgnet_bdl"
 START_TEST_SCRIPT = PROJECT_ROOT / "start_test.py"
-
+UPLOAD_DIR = PROJECT_ROOT / "uploads"
 # Create necessary directories
 CACHE_DIR.mkdir(exist_ok=True)
-
+UPLOAD_DIR.mkdir(exist_ok=True)  
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -84,9 +84,9 @@ async def segment(
     if not upper.filename.endswith('.obj'):
         raise HTTPException(status_code=400, detail="Upper jaw file must be .obj format")
     
-    # Define file paths
-    lower_path = CACHE_DIR / "lower.obj"
-    upper_path = CACHE_DIR / "upper.obj"
+    # Save uploads in UPLOAD_DIR (NOT in cache)
+    lower_path = UPLOAD_DIR / "lower.obj"
+    upper_path = UPLOAD_DIR / "upper.obj"
     
     try:
         # Save uploaded files
@@ -109,14 +109,18 @@ async def segment(
         logger.info("✅ Files saved successfully. Starting inference...")
         
         # Run segmentation
+       
+
         cmd = [
-            "python", str(START_TEST_SCRIPT),
+            sys.executable,
+            str(START_TEST_SCRIPT),
             "--input_lower_path", str(lower_path),
             "--input_upper_path", str(upper_path),
             "--cache_path", str(CACHE_DIR),
             "--checkpoint_path", str(CHECKPOINT_PATH_FPS),
             "--checkpoint_path_bdl", str(CHECKPOINT_PATH_BDL)
         ]
+
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
@@ -133,7 +137,7 @@ async def segment(
         
         logger.info("✅ Inference complete. Checking outputs...")
         
-        # Check for output files
+        # Check for output files (these are written into CACHE_DIR by start_test.py)
         output_files = {
             "lower_obj": CACHE_DIR / "input_lower.obj",
             "upper_obj": CACHE_DIR / "input_upper.obj",
@@ -145,7 +149,6 @@ async def segment(
         
         if missing_files:
             logger.error(f"Missing output files: {missing_files}")
-            # List all files in cache directory for debugging
             cache_files = list(CACHE_DIR.glob("*"))
             logger.info(f"Files in cache directory: {[f.name for f in cache_files]}")
             
@@ -180,6 +183,7 @@ async def segment(
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/outputs/{filename}")
 async def get_output(filename: str):

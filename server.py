@@ -1,6 +1,5 @@
 """
 FastAPI Server for 3D Teeth Segmentation
-Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8000
 """
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -12,7 +11,6 @@ import shutil
 from pathlib import Path
 import logging
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -26,15 +24,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Fixed: Explicit Colab paths
 PROJECT_ROOT = Path("/content/inbracket_ai")
 CACHE_DIR = Path("/content/inbracket_ai/cache")
-CHECKPOINT_PATH_FPS = Path(os.environ.get("CHECKPOINT_PATH_FPS", "/content/tgnet_fps.h5"))
-CHECKPOINT_PATH_BDL = Path(os.environ.get("CHECKPOINT_PATH_BDL", "/content/tgnet_bdl.h5"))
+UPLOAD_DIR = Path("/content/inbracket_ai/uploads")
+OUTPUT_DIR = Path("/content/inbracket_ai/output")
+CHECKPOINT_PATH_FPS = Path(os.environ.get("CHECKPOINT_PATH_FPS", "/content/tgnet_fps"))
+CHECKPOINT_PATH_BDL = Path(os.environ.get("CHECKPOINT_PATH_BDL", "/content/tgnet_bdl"))
 START_TEST_SCRIPT = PROJECT_ROOT / "start_test.py"
 
-# Create cache dir if not exists
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 @app.get("/")
 async def root():
@@ -48,26 +49,31 @@ async def root():
         }
     }
 
+
 @app.get("/health")
 async def health_check():
     checks = {
         "start_test_exists": START_TEST_SCRIPT.exists(),
-        "checkpoint_fps_exists": CHECKPOINT_PATH_FPS.exists(),
-        "checkpoint_bdl_exists": CHECKPOINT_PATH_BDL.exists(),
-        "cache_dir_exists": CACHE_DIR.exists()
+        "checkpoint_fps_exists": (Path(str(CHECKPOINT_PATH_FPS) + ".h5")).exists(),
+        "checkpoint_bdl_exists": (Path(str(CHECKPOINT_PATH_BDL) + ".h5")).exists(),
+        "cache_dir_exists": CACHE_DIR.exists(),
+        "upload_dir_exists": UPLOAD_DIR.exists(),
+        "output_dir_exists": OUTPUT_DIR.exists(),
     }
     return {
         "status": "healthy" if all(checks.values()) else "unhealthy",
         "checks": checks,
-        # ✅ Added: show resolved paths for easy debugging
         "resolved_paths": {
             "project_root": str(PROJECT_ROOT),
             "cache_dir": str(CACHE_DIR),
-            "checkpoint_fps": str(CHECKPOINT_PATH_FPS),
-            "checkpoint_bdl": str(CHECKPOINT_PATH_BDL),
+            "upload_dir": str(UPLOAD_DIR),
+            "output_dir": str(OUTPUT_DIR),
+            "checkpoint_fps": str(CHECKPOINT_PATH_FPS) + ".h5",
+            "checkpoint_bdl": str(CHECKPOINT_PATH_BDL) + ".h5",
             "start_test": str(START_TEST_SCRIPT)
         }
     }
+
 
 @app.post("/segment")
 async def segment(
@@ -79,12 +85,11 @@ async def segment(
     if not upper.filename.endswith('.obj'):
         raise HTTPException(status_code=400, detail="Upper jaw file must be .obj format")
 
-    lower_path = CACHE_DIR / "lower.obj"
-    upper_path = CACHE_DIR / "upper.obj"
+    # ✅ FIX 1: Save to UPLOAD_DIR, not CACHE_DIR (cache gets wiped by start_test.py)
+    lower_path = UPLOAD_DIR / "lower.obj"
+    upper_path = UPLOAD_DIR / "upper.obj"
 
     try:
-        logger.info(f"Saving uploaded files to: {CACHE_DIR}")
-
         with open(lower_path, "wb") as f:
             content = await lower.read()
             f.write(content)
@@ -95,7 +100,6 @@ async def segment(
             f.write(content)
             logger.info(f"✅ Saved upper jaw: {len(content)} bytes → {upper_path}")
 
-        # ✅ Verify files actually exist before calling subprocess
         if not lower_path.exists():
             raise HTTPException(status_code=500, detail=f"lower.obj not found at {lower_path}")
         if not upper_path.exists():
@@ -103,15 +107,16 @@ async def segment(
 
         logger.info("Starting inference...")
 
-       cmd = [
-    "python", str(START_TEST_SCRIPT),
-    "--input_lower_path", str(lower_path),
-    "--input_upper_path", str(upper_path),
-    "--cache_path", str(CACHE_DIR),
-    "--output_path", str(OUTPUT_DIR),                        # ✅ added output_path
-    "--checkpoint_path", "/content/tgnet_fps",               # ✅ NO .h5 extension
-    "--checkpoint_path_bdl", "/content/tgnet_bdl",           # ✅ NO .h5 extension
-]
+        # ✅ FIX 2: Correct indentation + output_path added
+        cmd = [
+            "python", str(START_TEST_SCRIPT),
+            "--input_lower_path", str(lower_path),
+            "--input_upper_path", str(upper_path),
+            "--cache_path", str(CACHE_DIR),
+            "--output_path", str(OUTPUT_DIR),
+            "--checkpoint_path", str(CHECKPOINT_PATH_FPS),
+            "--checkpoint_path_bdl", str(CHECKPOINT_PATH_BDL)
+        ]
 
         logger.info(f"Running: {' '.join(cmd)}")
 
@@ -121,18 +126,21 @@ async def segment(
         if result.stderr:
             logger.warning(f"Stderr: {result.stderr}")
 
-       output_files = {
-    "lower_obj": OUTPUT_DIR / "colored_input_lower.obj",   # ✅ correct location
-    "upper_obj": OUTPUT_DIR / "colored_input_upper.obj",   # ✅ correct location
-    "lower_labels": CACHE_DIR / "input_lower.json",        # ✅ still in cache
-    "upper_labels": CACHE_DIR / "input_upper.json"         # ✅ still in cache
-}
+        # ✅ FIX 3: Correct output filenames and directories
+        output_files = {
+            "lower_obj": OUTPUT_DIR / "colored_input_lower.obj",
+            "upper_obj": OUTPUT_DIR / "colored_input_upper.obj",
+            "lower_labels": CACHE_DIR / "input_lower.json",
+            "upper_labels": CACHE_DIR / "input_upper.json"
+        }
 
         missing_files = [name for name, path in output_files.items() if not path.exists()]
 
         if missing_files:
             cache_files = list(CACHE_DIR.glob("*"))
+            output_files_list = list(OUTPUT_DIR.glob("*"))
             logger.info(f"Files in cache: {[f.name for f in cache_files]}")
+            logger.info(f"Files in output: {[f.name for f in output_files_list]}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Inference done but output files missing: {missing_files}"
@@ -140,12 +148,13 @@ async def segment(
 
         logger.info("✅ All output files generated successfully")
 
+        # ✅ FIX 4: Return correct filenames
         return {
             "status": "success",
             "message": "Segmentation completed successfully",
             "outputs": {
-                "lower_obj": "/outputs/input_lower.obj",
-                "upper_obj": "/outputs/input_upper.obj",
+                "lower_obj": "/outputs/colored_input_lower.obj",
+                "upper_obj": "/outputs/colored_input_upper.obj",
                 "lower_labels": "/outputs/input_lower.json",
                 "upper_labels": "/outputs/input_upper.json"
             },
@@ -161,11 +170,13 @@ async def segment(
         logger.error(f"❌ Unexpected error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ✅ FIX 5: Correct allowed filenames + search both OUTPUT_DIR and CACHE_DIR
 @app.get("/outputs/{filename}")
 async def get_output(filename: str):
     allowed_files = [
-        "input_lower.obj",
-        "input_upper.obj",
+        "colored_input_lower.obj",
+        "colored_input_upper.obj",
         "input_lower.json",
         "input_upper.json"
     ]
@@ -173,22 +184,25 @@ async def get_output(filename: str):
     if filename not in allowed_files:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    file_path = CACHE_DIR / filename
+    for directory in [OUTPUT_DIR, CACHE_DIR]:
+        file_path = directory / filename
+        if file_path.exists():
+            return FileResponse(path=file_path, filename=filename, media_type="application/octet-stream")
 
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+    raise HTTPException(status_code=404, detail="File not found")
 
-    return FileResponse(path=file_path, filename=filename, media_type="application/octet-stream")
 
 @app.delete("/cache")
 async def clear_cache():
     try:
-        for file in CACHE_DIR.glob("*"):
-            if file.is_file():
-                file.unlink()
+        for directory in [CACHE_DIR, UPLOAD_DIR, OUTPUT_DIR]:
+            for file in directory.glob("*"):
+                if file.is_file():
+                    file.unlink()
         return {"status": "success", "message": "Cache cleared"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

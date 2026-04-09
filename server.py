@@ -103,14 +103,15 @@ async def segment(
 
         logger.info("Starting inference...")
 
-        cmd = [
-            "python", str(START_TEST_SCRIPT),
-            "--input_lower_path", str(lower_path),
-            "--input_upper_path", str(upper_path),
-            "--cache_path", str(CACHE_DIR),
-            "--checkpoint_path", str(CHECKPOINT_PATH_FPS),
-            "--checkpoint_path_bdl", str(CHECKPOINT_PATH_BDL)
-        ]
+       cmd = [
+    "python", str(START_TEST_SCRIPT),
+    "--input_lower_path", str(lower_path),
+    "--input_upper_path", str(upper_path),
+    "--cache_path", str(CACHE_DIR),
+    "--output_path", str(OUTPUT_DIR),                        # ✅ added output_path
+    "--checkpoint_path", "/content/tgnet_fps",               # ✅ NO .h5 extension
+    "--checkpoint_path_bdl", "/content/tgnet_bdl",           # ✅ NO .h5 extension
+]
 
         logger.info(f"Running: {' '.join(cmd)}")
 
@@ -120,12 +121,12 @@ async def segment(
         if result.stderr:
             logger.warning(f"Stderr: {result.stderr}")
 
-        output_files = {
-            "lower_obj": CACHE_DIR / "input_lower.obj",
-            "upper_obj": CACHE_DIR / "input_upper.obj",
-            "lower_labels": CACHE_DIR / "input_lower.json",
-            "upper_labels": CACHE_DIR / "input_upper.json"
-        }
+       output_files = {
+    "lower_obj": OUTPUT_DIR / "colored_input_lower.obj",   # ✅ correct location
+    "upper_obj": OUTPUT_DIR / "colored_input_upper.obj",   # ✅ correct location
+    "lower_labels": CACHE_DIR / "input_lower.json",        # ✅ still in cache
+    "upper_labels": CACHE_DIR / "input_upper.json"         # ✅ still in cache
+}
 
         missing_files = [name for name, path in output_files.items() if not path.exists()]
 

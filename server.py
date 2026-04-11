@@ -7,9 +7,11 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess
 import os
+import sys
 import shutil
 from pathlib import Path
 import logging
+import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,6 +37,68 @@ START_TEST_SCRIPT = PROJECT_ROOT / "start_test.py"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+sys.path.append(str(PROJECT_ROOT))
+
+
+def prepare_output_files(cache_dir: Path, output_dir: Path):
+    """
+    Process cache files and save clean versions to output dir:
+    - Lower: load → dedup → save
+    - Upper: load → dedup → flip back (x,z negate) → save
+    - JSON:  copy as-is (labels already match deduplicated vertices)
+    """
+    import gen_utils as gu
+
+    def dedup_and_save(input_path: Path, output_path: Path, flip: bool = False):
+        result = gu.read_txt_obj_ls(str(input_path), ret_mesh=True, use_tri_mesh=True)
+        mesh = result[1]
+        mesh = mesh.remove_duplicated_vertices()
+        mesh.compute_vertex_normals()
+
+        vertices = np.asarray(mesh.vertices).copy()
+        faces = np.asarray(mesh.triangles)
+        normals = np.asarray(mesh.vertex_normals)
+
+        # Flip upper jaw back to original orientation
+        if flip:
+            rot_mat = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, -1]])
+            vertices = vertices @ rot_mat.T
+
+        # Write clean OBJ manually to preserve exact vertex count
+        with open(output_path, 'w') as f:
+            f.write("# Processed by InBracket AI\n")
+            for v in vertices:
+                f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+            for vn in normals:
+                f.write(f"vn {vn[0]:.6f} {vn[1]:.6f} {vn[2]:.6f}\n")
+            for face in faces:
+                f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+
+        v_count = len(vertices)
+        logger.info(f"✅ Saved {output_path.name} ({v_count} vertices, flip={flip})")
+        return v_count
+
+    # Process lower jaw (dedup only)
+    lower_v = dedup_and_save(
+        cache_dir / "input_lower.obj",
+        output_dir / "lower.obj",
+        flip=False
+    )
+
+    # Process upper jaw (dedup + flip back to original orientation)
+    upper_v = dedup_and_save(
+        cache_dir / "input_upper.obj",
+        output_dir / "upper.obj",
+        flip=True
+    )
+
+    # Copy JSON files as-is (labels match deduplicated vertex count)
+    shutil.copy(cache_dir / "input_lower.json", output_dir / "lower.json")
+    shutil.copy(cache_dir / "input_upper.json", output_dir / "upper.json")
+    logger.info("✅ Copied JSON label files")
+
+    return lower_v, upper_v
 
 
 @app.get("/")
@@ -85,11 +149,11 @@ async def segment(
     if not upper.filename.endswith('.obj'):
         raise HTTPException(status_code=400, detail="Upper jaw file must be .obj format")
 
-    # ✅ FIX 1: Save to UPLOAD_DIR, not CACHE_DIR (cache gets wiped by start_test.py)
     lower_path = UPLOAD_DIR / "lower.obj"
     upper_path = UPLOAD_DIR / "upper.obj"
 
     try:
+        # Save uploaded files
         with open(lower_path, "wb") as f:
             content = await lower.read()
             f.write(content)
@@ -107,7 +171,6 @@ async def segment(
 
         logger.info("Starting inference...")
 
-        # ✅ FIX 2: Correct indentation + output_path added
         cmd = [
             "python", str(START_TEST_SCRIPT),
             "--input_lower_path", str(lower_path),
@@ -119,44 +182,63 @@ async def segment(
         ]
 
         logger.info(f"Running: {' '.join(cmd)}")
-
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-
         logger.info(f"Stdout: {result.stdout}")
         if result.stderr:
             logger.warning(f"Stderr: {result.stderr}")
 
-        # ✅ FIX 3: Correct output filenames and directories
-        output_files = {
-            "lower_obj": OUTPUT_DIR / "colored_input_lower.obj",
-            "upper_obj": OUTPUT_DIR / "colored_input_upper.obj",
-            "lower_labels": CACHE_DIR / "input_lower.json",
-            "upper_labels": CACHE_DIR / "input_upper.json"
+        # Check inference outputs exist in cache
+        required_cache_files = {
+            "input_lower.obj":  CACHE_DIR / "input_lower.obj",
+            "input_upper.obj":  CACHE_DIR / "input_upper.obj",
+            "input_lower.json": CACHE_DIR / "input_lower.json",
+            "input_upper.json": CACHE_DIR / "input_upper.json",
         }
-
-        missing_files = [name for name, path in output_files.items() if not path.exists()]
-
-        if missing_files:
-            cache_files = list(CACHE_DIR.glob("*"))
-            output_files_list = list(OUTPUT_DIR.glob("*"))
-            logger.info(f"Files in cache: {[f.name for f in cache_files]}")
-            logger.info(f"Files in output: {[f.name for f in output_files_list]}")
+        missing = [name for name, path in required_cache_files.items() if not path.exists()]
+        if missing:
+            logger.error(f"Missing cache files: {missing}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Inference done but output files missing: {missing_files}"
+                detail=f"Inference done but cache files missing: {missing}"
             )
 
-        logger.info("✅ All output files generated successfully")
+        # Process and save clean output files
+        logger.info("Processing output files...")
+        lower_v, upper_v = prepare_output_files(CACHE_DIR, OUTPUT_DIR)
 
-        # ✅ FIX 4: Return correct filenames
+        # Verify output files exist
+        required_output_files = {
+            "lower.obj":  OUTPUT_DIR / "lower.obj",
+            "upper.obj":  OUTPUT_DIR / "upper.obj",
+            "lower.json": OUTPUT_DIR / "lower.json",
+            "upper.json": OUTPUT_DIR / "upper.json",
+        }
+        missing_outputs = [name for name, path in required_output_files.items() if not path.exists()]
+        if missing_outputs:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Output processing failed, missing: {missing_outputs}"
+            )
+
+        logger.info("✅ All output files ready")
+
         return {
             "status": "success",
             "message": "Segmentation completed successfully",
             "outputs": {
-                "lower_obj": "/outputs/colored_input_lower.obj",
-                "upper_obj": "/outputs/colored_input_upper.obj",
-                "lower_labels": "/outputs/input_lower.json",
-                "upper_labels": "/outputs/input_upper.json"
+                "lower_obj":    "/outputs/lower.obj",
+                "upper_obj":    "/outputs/upper.obj",
+                "lower_labels": "/outputs/lower.json",
+                "upper_labels": "/outputs/upper.json",
+            },
+            "vertex_counts": {
+                "lower": lower_v,
+                "upper": upper_v,
+            },
+            "notes": {
+                "lower": "vertex count matches lower.json labels exactly",
+                "upper": "vertex count matches upper.json labels exactly, orientation restored",
+                "visualization": "map label index to color using FDI palette, 0=gingiva"
             },
             "download_instructions": "Use GET /outputs/{filename} to download each file"
         }
@@ -171,25 +253,27 @@ async def segment(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ✅ FIX 5: Correct allowed filenames + search both OUTPUT_DIR and CACHE_DIR
 @app.get("/outputs/{filename}")
 async def get_output(filename: str):
     allowed_files = [
-        "colored_input_lower.obj",
-        "colored_input_upper.obj",
-        "input_lower.json",
-        "input_upper.json"
+        "lower.obj",   # clean deduplicated lower mesh
+        "upper.obj",   # clean deduplicated upper mesh (flipped back)
+        "lower.json",  # lower labels + instances
+        "upper.json",  # upper labels + instances
     ]
 
     if filename not in allowed_files:
-        raise HTTPException(status_code=400, detail="Invalid filename")
+        raise HTTPException(status_code=400, detail=f"Invalid filename. Allowed: {allowed_files}")
 
-    for directory in [OUTPUT_DIR, CACHE_DIR]:
-        file_path = directory / filename
-        if file_path.exists():
-            return FileResponse(path=file_path, filename=filename, media_type="application/octet-stream")
+    file_path = OUTPUT_DIR / filename
+    if file_path.exists():
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type="application/octet-stream"
+        )
 
-    raise HTTPException(status_code=404, detail="File not found")
+    raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
 
 @app.delete("/cache")

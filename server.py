@@ -9,7 +9,6 @@ import subprocess
 import os
 import sys
 import shutil
-import time
 from pathlib import Path
 import logging
 import numpy as np
@@ -27,12 +26,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-PROJECT_ROOT = Path("/workspace/inbracket_ai")
-CACHE_DIR = Path("/workspace/inbracket_ai/cache")
-UPLOAD_DIR = Path("/workspace/inbracket_ai/uploads")
-OUTPUT_DIR = Path("/workspace/inbracket_ai/output")
-CHECKPOINT_PATH_FPS = Path(os.environ.get("CHECKPOINT_PATH_FPS", "/tgnet_fps"))
-CHECKPOINT_PATH_BDL = Path(os.environ.get("CHECKPOINT_PATH_BDL", "/tgnet_bdl"))
+PROJECT_ROOT = Path("/content/inbracket_ai")
+CACHE_DIR = Path("/content/inbracket_ai/cache")
+UPLOAD_DIR = Path("/content/inbracket_ai/uploads")
+OUTPUT_DIR = Path("/content/inbracket_ai/output")
+CHECKPOINT_PATH_FPS = Path(os.environ.get("CHECKPOINT_PATH_FPS", "/content/tgnet_fps"))
+CHECKPOINT_PATH_BDL = Path(os.environ.get("CHECKPOINT_PATH_BDL", "/content/tgnet_bdl"))
 START_TEST_SCRIPT = PROJECT_ROOT / "start_test.py"
 
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -154,11 +153,7 @@ async def segment(
     upper_path = UPLOAD_DIR / "upper.obj"
 
     try:
-        # ── Total request timer ──────────────────────────────────────────
-        total_start = time.time()
-
         # Save uploaded files
-        upload_start = time.time()
         with open(lower_path, "wb") as f:
             content = await lower.read()
             f.write(content)
@@ -168,17 +163,13 @@ async def segment(
             content = await upper.read()
             f.write(content)
             logger.info(f"✅ Saved upper jaw: {len(content)} bytes → {upper_path}")
-        upload_time = time.time() - upload_start
-        logger.info(f"⏱ File upload+save: {upload_time:.2f}s")
 
         if not lower_path.exists():
             raise HTTPException(status_code=500, detail=f"lower.obj not found at {lower_path}")
         if not upper_path.exists():
             raise HTTPException(status_code=500, detail=f"upper.obj not found at {upper_path}")
 
-        # ── GPU Inference timer ──────────────────────────────────────────
-        logger.info("Starting GPU inference...")
-        inference_start = time.time()
+        logger.info("Starting inference...")
 
         cmd = [
             "python", str(START_TEST_SCRIPT),
@@ -196,9 +187,6 @@ async def segment(
         if result.stderr:
             logger.warning(f"Stderr: {result.stderr}")
 
-        inference_time = time.time() - inference_start
-        logger.info(f"⏱ GPU inference: {inference_time:.2f}s ({inference_time/60:.2f} min)")
-
         # Check inference outputs exist in cache
         required_cache_files = {
             "input_lower.obj":  CACHE_DIR / "input_lower.obj",
@@ -214,12 +202,9 @@ async def segment(
                 detail=f"Inference done but cache files missing: {missing}"
             )
 
-        # ── Post-processing timer ────────────────────────────────────────
+        # Process and save clean output files
         logger.info("Processing output files...")
-        postprocess_start = time.time()
         lower_v, upper_v = prepare_output_files(CACHE_DIR, OUTPUT_DIR)
-        postprocess_time = time.time() - postprocess_start
-        logger.info(f"⏱ Post-processing: {postprocess_time:.2f}s")
 
         # Verify output files exist
         required_output_files = {
@@ -235,9 +220,6 @@ async def segment(
                 detail=f"Output processing failed, missing: {missing_outputs}"
             )
 
-        # ── Total time ───────────────────────────────────────────────────
-        total_time = time.time() - total_start
-        logger.info(f"⏱ TOTAL request time: {total_time:.2f}s ({total_time/60:.2f} min)")
         logger.info("✅ All output files ready")
 
         return {
@@ -252,14 +234,6 @@ async def segment(
             "vertex_counts": {
                 "lower": lower_v,
                 "upper": upper_v,
-            },
-            "timing": {
-                "upload_seconds":      round(upload_time, 2),
-                "inference_seconds":   round(inference_time, 2),
-                "inference_minutes":   round(inference_time / 60, 2),
-                "postprocess_seconds": round(postprocess_time, 2),
-                "total_seconds":       round(total_time, 2),
-                "total_minutes":       round(total_time / 60, 2),
             },
             "notes": {
                 "lower": "vertex count matches lower.json labels exactly",
